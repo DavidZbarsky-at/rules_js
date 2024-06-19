@@ -130,14 +130,14 @@ _ATTRS = {
         doc = """Enables [$(location)](https://bazel.build/reference/be/make-variables#predefined_label_variables)
         and ["Make variable"](https://bazel.build/reference/be/make-variables) substitution for `fixed_args`.
 
-        This comes at some analysis-time cost.""",
+        This comes at some analysis-time cost even for a set of args that does not have any expansions.""",
     ),
     "expand_env": attr.bool(
         default = True,
         doc = """Enables [$(location)](https://bazel.build/reference/be/make-variables#predefined_label_variables)
         and ["Make variable"](https://bazel.build/reference/be/make-variables) substitution for `env`.
 
-        This comes at some analysis-time cost.""",
+        This comes at some analysis-time cost even for a set of envs that does not have any expansions.""",
     ),
     "fixed_args": attr.string_list(
         doc = """Fixed command line arguments to pass to the Node.js when this
@@ -340,16 +340,8 @@ def _expand_env_if_needed(ctx, value):
         return " ".join([expand_variables(ctx, exp, attribute_name = "env") for exp in expand_locations(ctx, value, ctx.attr.data).split(" ")])
     return value
 
-def _bash_launcher(ctx, nodeinfo, entry_point_path, log_prefix_rule_set, log_prefix_rule, fixed_args, fixed_env, is_windows):
-    # Explicitly disable node fs patches on Windows:
-    # https://github.com/aspect-build/rules_js/issues/1137
-    if is_windows:
-        fixed_env = dict(fixed_env, **{"JS_BINARY__PATCH_NODE_FS": "0"})
-
+def _bash_launcher(ctx, nodeinfo, entry_point_path, log_prefix_rule_set, log_prefix_rule, fixed_args, is_windows):
     envs = [
-        _ENV_SET.format(var = key, value = _expand_env_if_needed(ctx, value))
-        for key, value in fixed_env.items()
-    ] + [
         _ENV_SET.format(var = key, value = _expand_env_if_needed(ctx, value))
         for key, value in ctx.attr.env.items()
     ]
@@ -383,7 +375,11 @@ def _bash_launcher(ctx, nodeinfo, entry_point_path, log_prefix_rule_set, log_pre
     for (key, value) in builtins.items():
         envs.append(_ENV_SET.format(var = key, value = value))
 
-    if ctx.attr.patch_node_fs:
+    if is_windows:
+        # Explicitly disable node fs patches on Windows:
+        # https://github.com/aspect-build/rules_js/issues/1137
+        envs.append(_ENV_SET.format(var = "JS_BINARY__PATCH_NODE_FS", value = "0"))
+    elif ctx.attr.patch_node_fs:
         # Set patch node fs API env if not already set to allow js_run_binary to override
         envs.append(_ENV_SET_IFF_NOT_SET.format(var = "JS_BINARY__PATCH_NODE_FS", value = "1"))
 
@@ -495,7 +491,7 @@ def _bash_launcher(ctx, nodeinfo, entry_point_path, log_prefix_rule_set, log_pre
 
     return launcher, toolchain_files
 
-def _create_launcher(ctx, log_prefix_rule_set, log_prefix_rule, fixed_args = [], fixed_env = {}):
+def _create_launcher(ctx, log_prefix_rule_set, log_prefix_rule, fixed_args = []):
     is_windows = ctx.target_platform_has_constraint(ctx.attr._windows_constraint[platform_common.ConstraintValueInfo])
 
     if ctx.attr.node_toolchain:
@@ -515,7 +511,7 @@ def _create_launcher(ctx, log_prefix_rule_set, log_prefix_rule, fixed_args = [],
         entry_point = ctx.files.entry_point[0]
         entry_point_path = entry_point.short_path
 
-    bash_launcher, toolchain_files = _bash_launcher(ctx, nodeinfo, entry_point_path, log_prefix_rule_set, log_prefix_rule, fixed_args, fixed_env, is_windows)
+    bash_launcher, toolchain_files = _bash_launcher(ctx, nodeinfo, entry_point_path, log_prefix_rule_set, log_prefix_rule, fixed_args, is_windows)
     launcher = create_windows_native_launcher_script(ctx, bash_launcher) if is_windows else bash_launcher
 
     launcher_files = [bash_launcher]

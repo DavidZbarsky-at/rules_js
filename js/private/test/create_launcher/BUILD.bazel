@@ -3,4 +3,8 @@ load(":custom_test.bzl", "custom_test")
 custom_test(
     name = "test",
     entry_point = "test.js",
+    env = {
+        "ENV1": "foo",
+        "ENV2": "bar",
+    },
 )
